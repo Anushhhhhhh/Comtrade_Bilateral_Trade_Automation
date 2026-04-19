@@ -1,0 +1,184 @@
+report_directory = # Current Directory of your files to be downloaded
+country_code_directory =# Current Directory for countries and code
+# -*- coding: utf-8 -*-
+key_for_comtrade_api = your_api_key
+
+# Step 1. Extracting Data
+import os
+import json
+import wbdata
+import pandas as pd
+import requests
+import comtradeapicall
+import datetime as dt
+"""1. The "Global Trade Intelligence" Automator (Automation + Viz)
+Automation: A script that uses requests to pull data from the Comtrade APl, 
+cleans the JSON, and saves a "Monthly Trade Report" as a PDF.
+Visualization: A Streamlit dashboard showing 
+import/export trends and top commoditiesusing Plotly.
+LinkedIn Hook: "Automated the extraction and reporting of bilateral 
+trade data, reducingmanual research time by 90%."""
+
+# Send a request to comtrade API
+# Fetch Monthly Import & Export data
+# Chooses the country
+
+# Clean Data and make it ina proper format for calculation
+# Saving as a PDF
+# Plot the data based on month/commodity/import/export
+
+# #1. Step Sending the request to comtrade API
+
+os.chdir(country_code_directory)
+import partner_codes_api_db
+from partner_codes_api_db import partner_codes_to_names
+os.chdir(report_directory)
+subscription_key = key_for_comtrade_api # comtrade api subscription key (from comtradedeveloper.un.org)
+
+while True:
+    month_numbers = []
+    year_numbers = []
+
+    month_year = input("Please choose the period in the format YYYYMM: (Type 'Stop!' to stop extracting data) ")
+    if month_year in ["Stop!"]:
+        print("Move to next section")
+        break
+    if month_year:
+        country_a = input("Please choose the Country Name 1: ")
+        country_b = input("Please choose the Country Name 2: ")
+        type_of_trade = input("Import(M) or Export(X): ")
+        
+        countries = []
+        code_for_chosen_countries = []
+        for k, v in partner_codes_to_names.items():
+            if v in [country_a,country_b]:
+                code_for_chosen_countries.append(k)
+                countries.append(v)
+        print(code_for_chosen_countries)
+        print(countries)
+    
+        for names in countries:
+            if names in partner_codes_to_names.values():
+            
+                    trade_data_a_with_partners = comtradeapicall.getFinalData(subscription_key, typeCode='C', freqCode="M", clCode='HS', period=month_year,
+                                                reporterCode=code_for_chosen_countries[0], cmdCode=None, flowCode=type_of_trade, partnerCode=code_for_chosen_countries[-1],
+                                                partner2Code=None,
+                                                customsCode=None, motCode=None, maxRecords=None, format_output='JSON',
+                                                aggregateBy=None, breakdownMode='classic', countOnly=None, includeDesc=True)
+                    trade_data_b_with_partners = comtradeapicall.getFinalData(subscription_key, typeCode='C', freqCode="M", clCode='HS', period=month_year,
+                                                reporterCode=code_for_chosen_countries[-1], cmdCode=None, flowCode=type_of_trade, partnerCode=code_for_chosen_countries[0],
+                                                partner2Code=None,
+                                                customsCode=None, motCode=None, maxRecords=None, format_output='JSON',
+                                                aggregateBy=None, breakdownMode='classic', countOnly=None, includeDesc=True)
+                
+                    print("\nCountry A:\n",trade_data_a_with_partners.head(1))
+                    trade_data_a_with_partners.to_json(fr"Country_A-only_partners{country_a} and {country_b} {month_year} {type_of_trade}.json")
+                    print("\nCountry B:\n",trade_data_b_with_partners.head(1))
+                    trade_data_b_with_partners.to_json(fr"Country_B-only_partners {country_a} and {country_b} {month_year} {type_of_trade}.json")    
+    print(f"You have downloaded data for: {country_a}\nfor the period of: {month_year}\nTrade Type: {type_of_trade}") 
+
+
+
+# Step 2. Cleaning Data
+def file_cleaner(file_name):
+    with open(file_name) as f:
+        file_reader = json.load(f)
+        country_a = pd.DataFrame(file_reader)
+        return country_a
+# file_cleaner(r"Country_A-only_partners.json")
+
+merge_df = pd.DataFrame()
+for files_names in os.listdir(report_directory):
+    print(f"File Names: {files_names}\n")
+    if files_names.endswith(".json"):
+        dfs = file_cleaner(files_names)
+        dfs["source_file"] = files_names
+        merge_df = pd.concat([dfs,merge_df])
+merge_df["source_file"].unique()
+print(merge_df.columns.tolist())
+print(merge_df["reporterDesc"].unique())
+print(merge_df["partnerDesc"].unique())
+print(merge_df["flowDesc"].unique())
+
+# merge_df.columns
+merge_df_adjusted = merge_df[['typeCode', 'freqCode', 'refPeriodId',  'reporterDesc', 'flowCode', 'flowDesc', 'partnerDesc',   'classificationCode',
+       'classificationSearchCode',  'cmdCode',
+       'cmdDesc',  'motDesc', 'cifvalue', 'primaryValue']]
+merge_df_adjusted["date_mm_yy"] = merge_df_adjusted["refPeriodId"].astype(str)
+merge_df_adjusted["date_mm_yy"] = pd.to_datetime(merge_df_adjusted["date_mm_yy"].astype(str).str.slice(0,8))
+# merge_df_adjusted.info()
+merge_df_adjusted.head()
+
+
+# Step 3. Summarizing Data
+
+
+pd.options.display.float_format = '$ {:,.0f}'.format #"date_mm_yy", ,"partnerDesc",
+total_import_from_country_a = merge_df_adjusted.groupby(["reporterDesc","flowDesc",'partnerDesc'])[["primaryValue"]].sum()
+total_import_from_country_a_user = total_import_from_country_a
+total_import_from_country_a_user
+
+plot_df = total_import_from_country_a_user.reset_index().pivot(
+    index="reporterDesc",
+    columns="flowDesc",
+    values="primaryValue")
+
+
+# Step 4. Plotting the Values
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+
+ax = plot_df.plot(
+    kind="bar",
+    figsize=(9, 6)
+)
+
+ax.set_title(f"Trade Volume by Country (Export vs Import) for {merge_df_adjusted["date_mm_yy"].dt.month_name()[0]},{merge_df_adjusted["date_mm_yy"].dt.year[0]}")
+ax.set_xlabel("Country")
+ax.set_ylabel("Trade Amount (USD)")
+
+ax.yaxis.set_major_formatter(
+    ticker.FuncFormatter(lambda x, pos: f'{x:,.0f}')
+)
+
+plt.xticks(rotation=0)
+plt.tight_layout()
+plt.savefig("trade_volume_chart.png", dpi=200, bbox_inches='tight')
+plt.show() # plt.close(df_visualized)
+plt.show()
+
+
+
+# Step 5. Exporting the Values to pdf
+# Creating PDF report
+import fpdf
+from fpdf import FPDF
+pdf = FPDF()
+pdf.add_page()
+pdf.set_font("Helvetica", "B", 16)
+
+month_year =f"{merge_df_adjusted["date_mm_yy"].dt.month_name()[0]},{merge_df_adjusted["date_mm_yy"].dt.year[0]}"
+
+# Title
+pdf.cell(0, 10, "Monthly Trade Report", ln=True, align="C")
+pdf.set_font("Helvetica", "B", 14)
+pdf.cell(0, 10, f"{country_a} vs {country_b} - Period: {month_year}", ln=True, align="C")
+pdf.ln(10)
+
+# Add a data summary (first page) - Add some key statistics
+pdf.set_font("Helvetica", size=12)
+pdf.multi_cell(0, 8, f"Trade Volume by Country (Export vs Import) for {month_year}", align="L")
+pdf.ln(5)
+
+# Display the summarized data
+summary_text = total_import_from_country_a_user.to_string()
+pdf.multi_cell(0, 8, summary_text, align="L")
+pdf.ln(10)
+
+# Second page: Add the chart
+pdf.add_page()
+pdf.image("trade_volume_chart.png", x=10, y=pdf.get_y(), w=180)
+pdf.ln(100)  # Move down after the image
+
+# Output the PDF
+pdf.output(f"Monthly_Trade_Report_{'_'.join(merge_df_adjusted['reporterDesc'].unique())}.pdf")
